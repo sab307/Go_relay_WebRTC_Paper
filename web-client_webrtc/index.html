@@ -1,0 +1,992 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Teleop Latency Dashboard — WebRTC P2P</title>
+
+  <!-- uPlot (latency chart) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --bg0:     #0a0a12;
+      --bg1:     #111119;
+      --bg2:     #151520;
+      --bg3:     #1a1a25;
+      --line:    #2a2a3a;
+      --text1:   #e8e8e8;
+      --text2:   #8a8a9a;
+      --text3:   #5a5a6a;
+      --cyan:    #00f5d4;
+      --blue:    #4361ee;
+      --magenta: #f72585;
+      --orange:  #ff6b35;
+      --red:     #ef233c;
+      --green:   #2ec4b6;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      background: var(--bg0);
+      color: var(--text1);
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 13px;
+      min-height: 100vh;
+    }
+
+    code, kbd, pre, .mono { font-family: 'JetBrains Mono', monospace; }
+
+    .app {
+      display: grid;
+      grid-template-columns: minmax(360px, 420px) 1fr;
+      gap: 14px;
+      padding: 14px;
+      max-width: 1800px;
+      margin: 0 auto;
+    }
+
+    @media (max-width: 980px) {
+      .app { grid-template-columns: 1fr; }
+    }
+
+    /* ── Top bar ───────────────────────────────────────────────── */
+    .topbar {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 10px 14px;
+      background: var(--bg1);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+    }
+    .brand {
+      font-weight: 700;
+      font-size: 15px;
+      letter-spacing: 0.02em;
+    }
+    .brand-accent { color: var(--cyan); }
+
+    .spacer { flex: 1; }
+
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--bg2);
+    }
+    .status-dot {
+      width: 9px; height: 9px; border-radius: 50%;
+      background: var(--text3);
+      box-shadow: 0 0 8px transparent;
+      transition: background 0.2s, box-shadow 0.2s;
+    }
+    .status-dot.on {
+      background: var(--cyan);
+      box-shadow: 0 0 10px var(--cyan);
+    }
+    .status-text { font-size: 12px; color: var(--text2); }
+
+    .hz-group {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--bg2);
+    }
+    .hz-group label { font-size: 12px; color: var(--text2); }
+    .hz-group select {
+      background: var(--bg3); color: var(--text1);
+      border: 1px solid var(--line);
+      padding: 3px 6px; border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace; font-size: 12px;
+    }
+    .hz-value { color: var(--cyan); font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+
+    /* ── Buttons ───────────────────────────────────────────────── */
+    .btn {
+      background: var(--bg3);
+      color: var(--text1);
+      border: 1px solid var(--line);
+      padding: 7px 14px;
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+    }
+    .btn:hover { background: var(--line); border-color: var(--cyan); }
+    .btn.primary { background: var(--cyan); color: #0a0a12; border-color: var(--cyan); }
+    .btn.primary:hover { background: #00d4b5; }
+    .btn.warn { color: var(--orange); border-color: var(--orange); }
+    .btn.danger { color: var(--red); border-color: var(--red); }
+    .btn.danger:hover { background: rgba(239,35,60,0.12); }
+    .btn.estop-active {
+      background: var(--red) !important;
+      color: #fff !important;
+      border-color: var(--red) !important;
+      animation: estop-pulse 1.2s infinite;
+    }
+    @keyframes estop-pulse {
+      0%,100% { box-shadow: 0 0 0 0 rgba(239,35,60,0.6); }
+      50%     { box-shadow: 0 0 0 8px rgba(239,35,60,0); }
+    }
+    .btn.precision-half {
+      color: var(--magenta); border-color: var(--magenta);
+    }
+
+    /* ── Panel / card ──────────────────────────────────────────── */
+    .panel {
+      background: var(--bg1);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 12px 14px;
+    }
+    .panel + .panel { margin-top: 14px; }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--line);
+    }
+    .panel-title {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text2);
+    }
+    .panel-sub { font-size: 11px; color: var(--text3); }
+
+    /* ── Input-mode selector ───────────────────────────────────── */
+    .mode-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+    }
+    .mode-option {
+      position: relative;
+      cursor: pointer;
+      background: var(--bg2);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 8px;
+      text-align: center;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .mode-option:hover { border-color: var(--text3); }
+    .mode-option input { position: absolute; opacity: 0; pointer-events: none; }
+    .mode-icon {
+      font-size: 20px;
+      display: block;
+      margin-bottom: 4px;
+    }
+    .mode-label { font-size: 11px; font-weight: 600; color: var(--text2); }
+    .mode-option input:checked ~ .mode-label { color: var(--cyan); }
+    .mode-option input:checked + .mode-icon,
+    .mode-option:has(input:checked) { border-color: var(--cyan); background: rgba(0,245,212,0.05); }
+
+    .hidden { display: none !important; }
+
+    /* ── Keyboard panel ────────────────────────────────────────── */
+    .wasd {
+      display: grid;
+      grid-template-columns: repeat(3, 44px);
+      grid-template-rows: repeat(2, 44px);
+      gap: 6px;
+      justify-content: center;
+      margin: 10px 0;
+    }
+    .key {
+      display: flex; align-items: center; justify-content: center;
+      background: var(--bg3);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 700;
+      color: var(--text2);
+      transition: all 0.1s;
+    }
+    .key.active {
+      background: var(--cyan); color: #0a0a12;
+      border-color: var(--cyan);
+      transform: translateY(1px);
+      box-shadow: 0 0 10px rgba(0,245,212,0.5);
+    }
+    .key-up { grid-column: 2; grid-row: 1; }
+    .key-left  { grid-column: 1; grid-row: 2; }
+    .key-down  { grid-column: 2; grid-row: 2; }
+    .key-right { grid-column: 3; grid-row: 2; }
+
+    .joystick {
+      width: 160px; height: 160px;
+      background: var(--bg3);
+      border: 2px solid var(--line);
+      border-radius: 50%;
+      position: relative;
+      margin: 10px auto;
+      touch-action: none;
+    }
+    .joystick::before {
+      content: '';
+      position: absolute; inset: 0;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at center, transparent 30%, rgba(42,42,58,0.3) 31%, transparent 32%),
+        radial-gradient(circle at center, transparent 60%, rgba(42,42,58,0.3) 61%, transparent 62%);
+      pointer-events: none;
+    }
+    .knob {
+      position: absolute;
+      width: 44px; height: 44px;
+      left: 50%; top: 50%;
+      transform: translate(-50%, -50%);
+      background: var(--cyan);
+      border: 2px solid #0a0a12;
+      border-radius: 50%;
+      cursor: grab;
+      box-shadow: 0 0 12px rgba(0,245,212,0.5);
+    }
+    .knob:active { cursor: grabbing; }
+
+    .speed-control {
+      display: flex; align-items: center; gap: 10px;
+      margin-top: 8px;
+    }
+    .speed-control label { color: var(--text2); font-size: 12px; min-width: 48px; }
+    .speed-control input[type=range] {
+      flex: 1;
+      accent-color: var(--cyan);
+    }
+    .speed-value {
+      color: var(--cyan);
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 700;
+      min-width: 42px;
+      text-align: right;
+    }
+
+    /* ── Gamepad / steering panels ─────────────────────────────── */
+    .cfg-grid {
+      display: grid;
+      grid-template-columns: 130px 1fr;
+      gap: 6px 10px;
+      align-items: center;
+      font-size: 12px;
+    }
+    .cfg-grid label { color: var(--text2); }
+    .cfg-grid select,
+    .cfg-grid input[type=range] {
+      width: 100%;
+    }
+    .cfg-grid select {
+      background: var(--bg3); color: var(--text1);
+      border: 1px solid var(--line);
+      padding: 4px 6px; border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+    }
+    .cfg-grid input[type=range] { accent-color: var(--cyan); }
+    .cfg-grid .range-row {
+      display: flex; align-items: center; gap: 8px;
+    }
+    .cfg-grid .range-val {
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--cyan); font-size: 11px;
+      min-width: 40px; text-align: right;
+    }
+    .checkbox-row {
+      display: flex; align-items: center; gap: 6px;
+      color: var(--text2);
+      cursor: pointer;
+    }
+    .checkbox-row input { accent-color: var(--cyan); }
+
+    .gp-status {
+      display: block; margin: 4px 0 8px;
+      padding: 6px 8px;
+      background: var(--bg2);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--text2);
+    }
+
+    .live-readouts {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 1px solid var(--line);
+    }
+    .live-readouts.four-col { grid-template-columns: repeat(4, 1fr); }
+    .readout {
+      background: var(--bg2);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 6px 4px;
+      text-align: center;
+    }
+    .readout-label {
+      font-size: 9px; color: var(--text3);
+      text-transform: uppercase; letter-spacing: 0.08em;
+    }
+    .readout-val {
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 700;
+      color: var(--cyan);
+      font-size: 12px;
+      margin-top: 2px;
+    }
+    .readout-val.small { font-size: 10px; }
+
+    /* ── Steering wheel canvas ─────────────────────────────────── */
+    .wheel-wrap {
+      display: flex; justify-content: center;
+      padding: 10px 0;
+    }
+    #wheelCanvas {
+      width: 200px; height: 220px;
+      touch-action: none;
+    }
+
+    /* ── Velocity display ──────────────────────────────────────── */
+    .vel-display {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .vel-cell {
+      background: var(--bg2);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px;
+      text-align: center;
+    }
+    .vel-name {
+      font-size: 10px; color: var(--text3);
+      letter-spacing: 0.1em; text-transform: uppercase;
+    }
+    .vel-val {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 20px; font-weight: 700;
+      color: var(--cyan);
+      margin-top: 2px;
+    }
+
+    /* ── E-stop row ────────────────────────────────────────────── */
+    .estop-row {
+      display: flex; gap: 6px; margin-top: 10px;
+    }
+    .estop-row .btn { flex: 1; }
+
+    /* ── Metric cards ──────────────────────────────────────────── */
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+    @media (max-width: 640px) { .metrics { grid-template-columns: repeat(2, 1fr); } }
+    .metric-card {
+      background: var(--bg2);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px;
+    }
+    .metric-label {
+      font-size: 10px; text-transform: uppercase;
+      letter-spacing: 0.1em; color: var(--text3);
+    }
+    .metric-val {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 22px; font-weight: 700;
+      color: var(--cyan);
+      margin-top: 4px;
+    }
+    .metric-val.magenta { color: var(--magenta); }
+    .metric-val.blue    { color: var(--blue); }
+    .metric-val.orange  { color: var(--orange); }
+    .metric-unit {
+      font-size: 11px; font-weight: 500;
+      color: var(--text3); margin-left: 3px;
+    }
+
+    /* ── Breakdown ─────────────────────────────────────────────── */
+    #breakdown { display: flex; flex-direction: column; gap: 4px; }
+    .breakdown-item {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 5px 8px;
+      background: var(--bg2);
+      border-radius: 4px;
+      font-size: 11px;
+    }
+    .breakdown-label { display: flex; align-items: center; gap: 6px; color: var(--text2); }
+    .breakdown-dot   { width: 7px; height: 7px; border-radius: 50%; }
+    .breakdown-val   { font-family: 'JetBrains Mono', monospace; font-weight: 600; }
+
+    /* ── Timestamps ────────────────────────────────────────────── */
+    #timestamps { display: flex; flex-direction: column; gap: 3px; }
+    .ts-row {
+      display: flex; justify-content: space-between;
+      padding: 4px 8px; font-size: 11px;
+      background: var(--bg2); border-radius: 3px;
+    }
+    .ts-label { color: var(--text2); }
+    .ts-val   { font-family: 'JetBrains Mono', monospace; color: var(--cyan); }
+
+    /* ── Chart ─────────────────────────────────────────────────── */
+    #chart {
+      width: 100%; height: 260px;
+      background: #ffffff;       /* uPlot hooks.draw paints behind this */
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      overflow: hidden;
+      transition: background 0.2s;
+    }
+    .chart-actions { display: flex; gap: 6px; }
+
+    .chart-state-badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 8px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px; font-weight: 700;
+      letter-spacing: 0.1em;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+    }
+    .chart-state-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+    }
+    .chart-state-badge.idle   { color: var(--text3); }
+    .chart-state-badge.idle   .chart-state-dot { background: var(--text3); }
+    .chart-state-badge.active { color: var(--cyan); border-color: var(--cyan); }
+    .chart-state-badge.active .chart-state-dot { background: var(--cyan); box-shadow: 0 0 6px var(--cyan); }
+
+    /* ── Field selector ────────────────────────────────────────── */
+    .routing-grid {
+      display: grid;
+      grid-template-columns: 130px 1fr;
+      gap: 6px 10px;
+      align-items: center;
+      font-size: 12px;
+      margin-bottom: 10px;
+    }
+    .routing-grid label { color: var(--text2); }
+    .routing-grid select {
+      background: var(--bg3); color: var(--cyan);
+      border: 1px solid var(--line);
+      padding: 5px 6px; border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px; font-weight: 600;
+      width: 100%;
+    }
+    .routing-grid select:focus { outline: 1px solid var(--cyan); }
+
+    .adv-fields {
+      margin: 6px 0;
+      padding: 6px 0;
+      border-top: 1px solid var(--line);
+    }
+    .adv-fields summary {
+      cursor: pointer;
+      font-size: 11px;
+      color: var(--text3);
+      letter-spacing: 0.06em;
+      padding: 4px 0;
+      user-select: none;
+    }
+    .adv-fields summary:hover { color: var(--text2); }
+    .adv-fields[open] summary { color: var(--text2); margin-bottom: 6px; }
+
+    #fieldSelector {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px;
+    }
+    .field-toggle {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 6px;
+      padding: 5px 8px;
+      background: var(--bg2);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .field-toggle input { accent-color: var(--cyan); }
+    .field-name { color: var(--text2); flex: 1; }
+    .field-bit {
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--text3); font-size: 10px;
+    }
+    .field-meta {
+      display: flex; gap: 6px; margin-top: 8px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+    }
+    .field-meta .chip {
+      flex: 1; text-align: center;
+      padding: 5px;
+      background: var(--bg2);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      color: var(--text2);
+    }
+    .field-meta .chip .val { color: var(--cyan); font-weight: 700; }
+
+    /* ── Sync display ──────────────────────────────────────────── */
+    .sync-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+    .sync-cell {
+      background: var(--bg2);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 6px;
+      text-align: center;
+    }
+    .sync-label { font-size: 10px; color: var(--text3); letter-spacing: 0.08em; }
+    .sync-val {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px; color: var(--cyan);
+      margin-top: 2px; font-weight: 600;
+    }
+
+    /* ── Log controls ──────────────────────────────────────────── */
+    .log-row {
+      display: flex; gap: 6px; align-items: center;
+    }
+    .log-row .btn { flex: 1; }
+    .log-count {
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--cyan);
+      font-weight: 700;
+    }
+
+    /* ── Misc ──────────────────────────────────────────────────── */
+    .hint {
+      font-size: 10px;
+      color: var(--text3);
+      margin-top: 6px;
+      line-height: 1.5;
+    }
+    kbd {
+      background: var(--bg3); border: 1px solid var(--line);
+      border-bottom-width: 2px;
+      padding: 1px 5px; border-radius: 3px;
+      font-size: 10px; color: var(--text2);
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ── Top bar ─────────────────────────────────────────────── -->
+  <header class="topbar">
+    <div class="brand">Teleop <span class="brand-accent">Dashboard</span></div>
+    <div class="status">
+      <span class="status-dot" id="statusDot"></span>
+      <span class="status-text" id="statusText">Disconnected</span>
+    </div>
+    <div class="hz-group">
+      <label for="hzSelector">Rate</label>
+      <select id="hzSelector">
+        <option value="5">5 Hz</option>
+        <option value="10">10 Hz</option>
+        <option value="20" selected>20 Hz</option>
+        <option value="30">30 Hz</option>
+        <option value="50">50 Hz</option>
+        <option value="60">60 Hz</option>
+      </select>
+      <span class="hz-value" id="hzValue">20 Hz</span>
+    </div>
+    <div class="spacer"></div>
+    <button class="btn" id="syncBtn">Sync Clock</button>
+    <button class="btn primary" id="connectBtn">Connect</button>
+  </header>
+
+  <!-- ── LEFT COLUMN ─────────────────────────────────────────── -->
+  <section>
+
+    <!-- Input mode selector -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Input Source</span>
+        <span class="panel-sub">Select control device</span>
+      </div>
+      <div class="mode-row" role="radiogroup" aria-label="Input source">
+        <label class="mode-option">
+          <input type="radio" name="inputMode" value="keyboard" checked />
+          <span class="mode-icon">⌨️</span>
+          <span class="mode-label">Keyboard</span>
+        </label>
+        <label class="mode-option">
+          <input type="radio" name="inputMode" value="gamepad" />
+          <span class="mode-icon">🎮</span>
+          <span class="mode-label">Gamepad</span>
+        </label>
+        <label class="mode-option">
+          <input type="radio" name="inputMode" value="steering" />
+          <span class="mode-icon">🎡</span>
+          <span class="mode-label">Steering</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Velocity display (always visible) -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Velocity Command</span>
+        <span class="panel-sub mono">id: <span id="msgSize">20B</span></span>
+      </div>
+      <div class="vel-display">
+        <div class="vel-cell">
+          <div class="vel-name">linear</div>
+          <div class="vel-val" id="linY">0.00</div>
+        </div>
+        <div class="vel-cell">
+          <div class="vel-name">angular</div>
+          <div class="vel-val" id="angZ">0.00</div>
+        </div>
+      </div>
+      <div class="estop-row">
+        <button class="btn danger" id="stopBtn">Stop</button>
+      </div>
+    </div>
+
+    <!-- ── Keyboard panel ───────────────────────────────────── -->
+    <div class="panel" data-input-mode="keyboard">
+      <div class="panel-header">
+        <span class="panel-title">Keyboard + Joystick</span>
+        <span class="panel-sub">WASD · Arrow keys · <kbd>Space</kbd> E-stop</span>
+      </div>
+
+      <div class="wasd">
+        <div class="key key-up"    id="key-w">W</div>
+        <div class="key key-left"  id="key-a">A</div>
+        <div class="key key-down"  id="key-s">S</div>
+        <div class="key key-right" id="key-d">D</div>
+      </div>
+
+      <div class="joystick" id="joystick">
+        <div class="knob" id="knob"></div>
+      </div>
+
+      <div class="speed-control">
+        <label>Speed</label>
+        <input type="range" id="speedSlider" />
+        <span class="speed-value" id="speedValue">0.50</span>
+      </div>
+
+      <div class="hint">
+        Joystick scales by the Speed slider. <kbd>Space</kbd> toggles emergency stop.
+      </div>
+    </div>
+
+    <!-- ── Logitech Gamepad panel (dual-stick) ──────────────── -->
+    <div class="panel hidden" data-input-mode="gamepad">
+      <div class="panel-header">
+        <span class="panel-title">Logitech Gamepad</span>
+        <span class="panel-sub">Dual-stick mode</span>
+      </div>
+
+      <span class="gp-status" id="gpStatus">Not connected — press any button on your gamepad</span>
+
+      <div class="cfg-grid">
+        <label for="gpLinAxisSel">Linear axis</label>
+        <select id="gpLinAxisSel">
+          <option value="1">Axis 1 (Left-stick Y)</option>
+          <option value="3">Axis 3 (Right-stick Y)</option>
+          <option value="0">Axis 0 (Left-stick X)</option>
+          <option value="2">Axis 2 (Right-stick X)</option>
+        </select>
+
+        <label for="gpAngAxisSel">Angular axis</label>
+        <select id="gpAngAxisSel">
+          <option value="0">Axis 0 (Left-stick X)</option>
+          <option value="2">Axis 2 (Right-stick X)</option>
+          <option value="1">Axis 1 (Left-stick Y)</option>
+          <option value="3">Axis 3 (Right-stick Y)</option>
+        </select>
+
+        <label></label>
+        <div style="display:flex; gap:12px;">
+          <label class="checkbox-row">
+            <input type="checkbox" id="gpInvertLinAxis" />
+            <span>Invert linear</span>
+          </label>
+          <label class="checkbox-row">
+            <input type="checkbox" id="gpInvertAngAxis" />
+            <span>Invert angular</span>
+          </label>
+        </div>
+
+        <label for="gpEStopButtonSel">E-Stop button</label>
+        <select id="gpEStopButtonSel">
+          <!-- Populated by steering.js with A/B/X/Y/LB/RB/... labels -->
+        </select>
+
+        <label for="gpDzSlider">Deadzone</label>
+        <div class="range-row">
+          <input type="range" id="gpDzSlider" min="0" max="0.3" step="0.01" />
+          <span class="range-val" id="gpDzVal">0.05</span>
+        </div>
+
+        <label for="gpSensSlider">Sensitivity</label>
+        <div class="range-row">
+          <input type="range" id="gpSensSlider" min="0.1" max="3.0" step="0.1" />
+          <span class="range-val" id="gpSensVal">1.0</span>
+        </div>
+      </div>
+
+      <div class="live-readouts">
+        <div class="readout">
+          <div class="readout-label">linear</div>
+          <div class="readout-val" id="gpLinVal">0.000</div>
+        </div>
+        <div class="readout">
+          <div class="readout-label">angular</div>
+          <div class="readout-val" id="gpAngVal">0.000</div>
+        </div>
+        <div class="readout">
+          <div class="readout-label">e-stop btn</div>
+          <div class="readout-val small" id="gpEStopVal">released</div>
+        </div>
+      </div>
+
+      <div class="hint">
+        Defaults target F310 / F710 in X-input mode. E-stop button uses
+        rising-edge detection — holding it will not re-toggle.
+        F32/F64 precision and the field selector apply identically to all input modes.
+      </div>
+    </div>
+
+    <!-- ── Steering wheel panel ─────────────────────────────── -->
+    <div class="panel hidden" data-input-mode="steering">
+      <div class="panel-header">
+        <span class="panel-title">Steering Wheel + Pedals</span>
+        <span class="panel-sub">Logitech G29 / G920 style</span>
+      </div>
+
+      <div class="wheel-wrap">
+        <canvas id="wheelCanvas" width="200" height="220"></canvas>
+      </div>
+
+      <div class="cfg-grid">
+        <label for="gpFwdAxisSel">Forward axis</label>
+        <select id="gpFwdAxisSel"></select>
+
+        <label for="gpRevAxisSel">Reverse axis</label>
+        <select id="gpRevAxisSel"></select>
+
+        <label for="wheelRangeSlider">Lock range</label>
+        <div class="range-row">
+          <input type="range" id="wheelRangeSlider" min="0.1" max="1.0" step="0.1" />
+          <span class="range-val" id="wheelRangeVal">±1.0</span>
+        </div>
+
+        <label></label>
+        <label class="checkbox-row">
+          <input type="checkbox" id="gpInvertSteer" />
+          <span>Invert steering</span>
+        </label>
+      </div>
+
+      <div class="live-readouts">
+        <div class="readout">
+          <div class="readout-label">steer</div>
+          <div class="readout-val" id="gpSteerVal">0.000</div>
+        </div>
+        <div class="readout">
+          <div class="readout-label">fwd</div>
+          <div class="readout-val" id="gpFwdVal">0.000</div>
+        </div>
+        <div class="readout">
+          <div class="readout-label">rev</div>
+          <div class="readout-val" id="gpRevVal">0.000</div>
+        </div>
+      </div>
+
+      <div class="estop-row" style="margin-top: 8px;">
+        <button class="btn" id="wheelCentreBtn">Centre wheel</button>
+      </div>
+    </div>
+
+    <!-- ── Field selector & precision ──────────────────────── -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Wire Format</span>
+        <span class="panel-sub">Applies to every input mode</span>
+      </div>
+
+      <!-- This is the webrtc build of the dashboard. Transport is fixed to:
+           WebRTC (P2P DataChannel via the Go signaling server). -->
+
+      <!-- Codec selector: binary CRC-8 frames vs self-describing JSON text -->
+      <div class="mode-row" role="radiogroup" aria-label="Wire codec" style="margin-bottom: 10px;">
+        <label class="mode-option">
+          <input type="radio" name="wireFormat" value="binary" checked />
+          <span class="mode-icon">🧬</span>
+          <span class="mode-label">Binary</span>
+        </label>
+        <label class="mode-option" style="grid-column: span 2;">
+          <input type="radio" name="wireFormat" value="json" />
+          <span class="mode-icon">{ }</span>
+          <span class="mode-label">JSON</span>
+        </label>
+      </div>
+
+      <!-- Primary routing: which Twist field the joystick/gamepad value writes to -->
+      <div class="routing-grid">
+        <label for="linearRouteSel">Forward / back →</label>
+        <select id="linearRouteSel">
+          <option value="">— off —</option>
+          <option value="linear_x">linear.x</option>
+          <option value="linear_y">linear.y</option>
+          <option value="linear_z">linear.z</option>
+        </select>
+
+        <label for="angularRouteSel">Turn →</label>
+        <select id="angularRouteSel">
+          <option value="">— off —</option>
+          <option value="angular_x">angular.x</option>
+          <option value="angular_y">angular.y</option>
+          <option value="angular_z">angular.z</option>
+        </select>
+      </div>
+
+      <!-- Advanced: per-field checkboxes. Normal users will just use the
+           dropdowns above; the checkboxes allow including extra zero-valued
+           fields on the wire if the downstream consumer needs them. -->
+      <details class="adv-fields">
+        <summary>Advanced: all wire fields</summary>
+        <div id="fieldSelector"><!-- populated by ui.js --></div>
+      </details>
+
+      <div class="field-meta">
+        <div class="chip">mask <span class="val mono" id="fieldMask">0x22</span></div>
+        <div class="chip">fields <span class="val mono" id="fieldCount">2/6</span></div>
+      </div>
+
+      <div class="estop-row" style="margin-top: 8px;">
+        <button class="btn" id="precisionBtn">Precision: f64 (8 B/field)</button>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ── RIGHT COLUMN ────────────────────────────────────────── -->
+  <section>
+
+    <!-- Metrics -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Latency Metrics</span>
+        <span class="panel-sub mono">CRC err: <span id="crcErrors">0</span></span>
+      </div>
+      <div class="metrics">
+        <div class="metric-card">
+          <div class="metric-label">RTT</div>
+          <div class="metric-val" id="mRtt">--<span class="metric-unit">ms</span></div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">→ Python</div>
+          <div class="metric-val magenta" id="mBR">--<span class="metric-unit">ms</span></div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Python Proc</div>
+          <div class="metric-val blue" id="mPy">--<span class="metric-unit">ms</span></div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">← Python</div>
+          <div class="metric-val orange" id="mPR">--<span class="metric-unit">ms</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Chart -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">
+          Latency History
+          <span class="chart-state-badge idle" id="chartStateBadge" style="margin-left: 10px;">
+            <span class="chart-state-dot"></span>IDLE
+          </span>
+        </span>
+        <div class="chart-actions">
+          <button class="btn" id="resetZoomBtn">Reset zoom</button>
+        </div>
+      </div>
+      <div id="chart"></div>
+    </div>
+
+    <!-- Breakdown + Timestamps side-by-side -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Latency Breakdown</span>
+      </div>
+      <div id="breakdown"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Timestamps</span>
+      </div>
+      <div id="timestamps"></div>
+    </div>
+
+    <!-- Clock sync -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Clock Sync (NTP-style)</span>
+        <span class="panel-sub" id="syncStatus">Not synced</span>
+      </div>
+      <div class="sync-grid">
+        <div class="sync-cell">
+          <div class="sync-label">OFFSET</div>
+          <div class="sync-val" id="syncOffset">-- ms</div>
+        </div>
+        <div class="sync-cell">
+          <div class="sync-label">SYNC RTT</div>
+          <div class="sync-val" id="syncRtt">-- ms</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Log -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">CSV Log Buffer</span>
+        <span class="panel-sub">Rows: <span class="log-count" id="logRowCount">0</span></span>
+      </div>
+      <div class="log-row">
+        <button class="btn" id="downloadLogBtn">Download CSV</button>
+        <button class="btn warn" id="clearLogBtn">Clear</button>
+      </div>
+    </div>
+
+  </section>
+
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
